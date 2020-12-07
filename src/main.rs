@@ -1,7 +1,9 @@
 use std::env;
+use std::collections::HashMap;
 use std::fs::read_dir;
 use std::fs::read_to_string;
 use serde_json::from_str;
+use reqwest::header::USER_AGENT;
 //use std::fs::File;
 //use std::io;
 //use std::io::Read;
@@ -14,10 +16,20 @@ use serde_derive::{Serialize, Deserialize};
 #[derive(Serialize, Deserialize)]
 struct Config {
     tlds: Vec<String> ,//The tld vector 
-    zonefile_dir : String
+    zonefile_dir : String,
+    czds_user: String,
+    czds_pass: String,
+}
+
+
+#[derive(Serialize, Deserialize)]
+struct Auth {
+    accessToken : String,
+    message: String
 }
 
 fn main() {
+    let mut rt = tokio::runtime::Runtime::new().unwrap();
     println!("i <3 golang");
     let args: Vec<String> = env::args().collect();
     if args.len() < 2 {
@@ -28,12 +40,38 @@ fn main() {
 
     let con = parse_config(config_file);
     check_old_zonefiles(&con);
+
+    match rt.block_on(czds_auth(&con)) {
+        Ok(_) => println!("Auth Done"),
+        Err(e) => panic!("An error ocurred: {}", e),
+    };
     
     
 }
 
-fn print_type_of<T>(_: &T) {
-    println!("{}", std::any::type_name::<T>())
+async fn czds_auth(con: &Config) -> Result<(),Box<dyn std::error::Error>> {
+// {"username": "jvolizka@jvol.gay", "password": "hunter2"}   
+    let mut creds = HashMap::new();
+    creds.insert("username", &con.czds_user);
+    creds.insert("password", &con.czds_pass);
+
+    let client = reqwest::Client::new();
+
+    //I hate this syntax
+    let res = client.post("https://account-api.icann.org/api/authenticate")
+    .json(&creds)
+    .header("Accept", "application/json")
+    .header(USER_AGENT , "jvolsbane / 0.0.1 kill_me")
+    .send()
+    .await?;
+
+    if !res.status().is_success() {
+        panic!("There is a problem with response :/ status code : {:?}" , res.text().await?)
+    } 
+    
+    let key: Auth = res.json().await?; 
+    println!("{}", key.message);
+    Ok(())
 }
 fn check_old_zonefiles(con: &Config) {
     // read the zonefile dir 

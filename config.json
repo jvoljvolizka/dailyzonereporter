@@ -1,4 +1,6 @@
 {
     "tlds" : [],
-    "zonefile_dir" : ""
+    "zonefile_dir" : "",
+    "czds_user" : "",
+    "czds_pass": ""
 }
