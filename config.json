@@ -1,3 +1,4 @@
 {
-    "tlds" : []
+    "tlds" : [],
+    "zonefile_dir" : ""
 }
