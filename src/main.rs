@@ -42,16 +42,17 @@ fn main() {
     check_old_zonefiles(&con);
 
     match rt.block_on(czds_auth(&con)) {
-        Ok(_) => println!("Auth Done"),
+        Ok(key) => println!("Auth Done"),
         Err(e) => panic!("An error ocurred: {}", e),
     };
     
     
 }
 
-async fn czds_auth(con: &Config) -> Result<(),Box<dyn std::error::Error>> {
+async fn czds_auth(con: &Config) -> Result<Auth,Box<dyn std::error::Error>> {
 // {"username": "jvolizka@jvol.gay", "password": "hunter2"}   
     let mut creds = HashMap::new();
+    let agent =  "jvolsbane / 0.0.1 kill_me";
     creds.insert("username", &con.czds_user);
     creds.insert("password", &con.czds_pass);
 
@@ -61,17 +62,34 @@ async fn czds_auth(con: &Config) -> Result<(),Box<dyn std::error::Error>> {
     let res = client.post("https://account-api.icann.org/api/authenticate")
     .json(&creds)
     .header("Accept", "application/json")
-    .header(USER_AGENT , "jvolsbane / 0.0.1 kill_me")
+    .header(USER_AGENT , agent)
     .send()
     .await?;
 
     if !res.status().is_success() {
         panic!("There is a problem with response :/ status code : {:?}" , res.text().await?)
     } 
-    
+
     let key: Auth = res.json().await?; 
     println!("{}", key.message);
-    Ok(())
+
+    let links = client.get("https://czds-api.icann.org/czds/downloads/links")
+    .header("Accept" , "application/json")
+    .header(USER_AGENT,agent)
+    .header("Authorization" , format!("Bearer {}", key.accessToken))
+    .send()
+    .await?;
+
+    let stuff: Vec<String> = links.json().await?; 
+    // check if we can actually download the tld list
+    for tld in &con.tlds {
+        if !stuff.contains(&format!("https://czds-api.icann.org/czds/downloads/{}.zone" , tld)) {
+            panic!("You don't have permission to download {} zonefile" , &tld);
+        }
+    }
+    
+    println!("Permission granted");
+    Ok(key)
 }
 fn check_old_zonefiles(con: &Config) {
     // read the zonefile dir 

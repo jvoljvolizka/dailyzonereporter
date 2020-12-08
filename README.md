@@ -2,8 +2,8 @@
 
 *You can tell it's him 'cause we put his name on the stone.*
 
-* Supply starting zonefile
-* Connect to czds api
+* ~~Supply starting zonefile~~
+* ~~Connect to czds api~~
 * Get the last zonefiles
 * Sort the files
 * Get the diff with old files
