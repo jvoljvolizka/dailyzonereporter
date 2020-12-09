@@ -2,5 +2,7 @@
     "tlds" : [],
     "zonefile_dir" : "",
     "czds_user" : "",
-    "czds_pass": ""
+    "czds_pass": "",
+    "czds_base_url": "https://czds-api.icann.org",
+    "czds_auth_url": "https://account-api.icann.org"
 }

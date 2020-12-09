@@ -1,11 +1,17 @@
+use std::io::Write;
+use futures::future::join_all;
 use std::env;
 use std::collections::HashMap;
 use std::fs::read_dir;
 use std::fs::read_to_string;
 use serde_json::from_str;
 use reqwest::header::USER_AGENT;
-//use std::fs::File;
-//use std::io;
+use std::fs::File;
+use std::io;
+use std::io::copy;
+use std::error::Error;
+use futures::future;
+use tokio::task::JoinHandle;
 //use std::io::Read;
 //use std::process;
 //use serde::Deserialize;
@@ -19,6 +25,8 @@ struct Config {
     zonefile_dir : String,
     czds_user: String,
     czds_pass: String,
+    czds_base_url: String,
+    czds_auth_url: String
 }
 
 
@@ -29,6 +37,7 @@ struct Auth {
 }
 
 fn main() {
+    let token: Auth;
     let mut rt = tokio::runtime::Runtime::new().unwrap();
     println!("i <3 golang");
     let args: Vec<String> = env::args().collect();
@@ -42,11 +51,83 @@ fn main() {
     check_old_zonefiles(&con);
 
     match rt.block_on(czds_auth(&con)) {
-        Ok(key) => println!("Auth Done"),
+        Ok(key) => token = key,
         Err(e) => panic!("An error ocurred: {}", e),
     };
+
+    match rt.block_on(download_zonefiles(con, token)) {
+        Ok(_) => println!("Download done",),
+        Err(e) => panic!("An error ocurred: {}", e),
+    };    
+
     
+}
+
+async fn download_zonefiles(con: Config , key: Auth) -> Result<(),Box<dyn std::error::Error>> {
     
+    let mut tasks: Vec<JoinHandle<Result<(), ()>>>= vec![];
+    
+
+    for tld in con.tlds {
+
+
+        //let path = format!("{}/czds/downloads/{}.zone", &con.czds_base_url , &tld);
+        let path = format!("http://127.0.0.1/{}.txt.gz", &tld );
+        let filedir = con.zonefile_dir.clone();
+        let token = key.accessToken.clone();
+        let client = reqwest::Client::new();
+        let agent =  "jvolsbane / 0.0.1 kill_me";
+
+        // Create a Tokio task for each url
+        tasks.push(tokio::spawn(async move {
+            println!("started downloading {}" , path);
+            match client.get(&path)
+            .header("Accept" , "application/json")
+            .header(USER_AGENT, agent)
+            .header("Authorization" , format!("Bearer {}", token))
+            .send()
+            .await
+             {
+
+                Ok(resp) => {
+                    if !resp.status().is_success(){
+                        println!("ERROR downloading {}", resp.status())
+                    }
+                
+                    match resp.bytes().await {
+                        Ok(data) => {
+                            
+                            println!("RESPONSE: {} bytes from {}", data.len(), path);
+                            
+                            let filename = format!("{}{}.txt.gz" , filedir  , &tld );
+                            let mut file = match File::create(filename) {
+                                Err(why) => panic!("couldn't create {}", why),
+                                Ok(file) => file,
+                            };
+
+                            file.write_all(&data).expect("failed to write file");
+                            
+                        }
+                        Err(e) => println!("ERROR reading {} - {}", path , e),
+                    }
+                }
+                Err(e) => println!("ERROR downloading {} - {}", path , e),
+            }
+            Ok(())
+        }));
+    }
+
+    // Wait for them all to finish
+    println!("Started {} tasks. Waiting...", tasks.len());
+    join_all(tasks).await;
+
+   /* for tld in &con.tlds {
+        download_and_copy(&con.zonefile_dir, &tld , &key);
+        println!("dummy for https://czds-api.icann.org/czds/downloads/{}.zone" , &tld)
+    }*/
+    Ok(())
+
+   
 }
 
 async fn czds_auth(con: &Config) -> Result<Auth,Box<dyn std::error::Error>> {
@@ -59,7 +140,8 @@ async fn czds_auth(con: &Config) -> Result<Auth,Box<dyn std::error::Error>> {
     let client = reqwest::Client::new();
 
     //I hate this syntax
-    let res = client.post("https://account-api.icann.org/api/authenticate")
+
+    let res = client.post(&format!("{}/api/authenticate" , &con.czds_auth_url))
     .json(&creds)
     .header("Accept", "application/json")
     .header(USER_AGENT , agent)
@@ -73,7 +155,7 @@ async fn czds_auth(con: &Config) -> Result<Auth,Box<dyn std::error::Error>> {
     let key: Auth = res.json().await?; 
     println!("{}", key.message);
 
-    let links = client.get("https://czds-api.icann.org/czds/downloads/links")
+    let links = client.get(&format!("{}/czds/downloads/links" , &con.czds_base_url))
     .header("Accept" , "application/json")
     .header(USER_AGENT,agent)
     .header("Authorization" , format!("Bearer {}", key.accessToken))
@@ -83,7 +165,7 @@ async fn czds_auth(con: &Config) -> Result<Auth,Box<dyn std::error::Error>> {
     let stuff: Vec<String> = links.json().await?; 
     // check if we can actually download the tld list
     for tld in &con.tlds {
-        if !stuff.contains(&format!("https://czds-api.icann.org/czds/downloads/{}.zone" , tld)) {
+        if !stuff.contains(&format!("{}/czds/downloads/{}.zone" ,&con.czds_base_url , &tld)) {
             panic!("You don't have permission to download {} zonefile" , &tld);
         }
     }
