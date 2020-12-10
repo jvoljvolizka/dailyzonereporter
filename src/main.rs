@@ -57,19 +57,28 @@ fn main() {
         Ok(key) => token = key,
         Err(e) => panic!("An error ocurred: {}", e),
     };
-    let cl_con = con.clone();
-    match rt.block_on(download_zonefiles(cl_con, token)) {
+    let zncl_con = con.clone();
+    match rt.block_on(download_zonefiles(zncl_con, token)) {
         Ok(_) => println!("Download done",),
         Err(e) => panic!("An error ocurred: {}", e),
     };    
-
-    unzip_and_compare(con);
+    let uzcl_con = con.clone();
+    match rt.block_on(unzip_and_compare(uzcl_con)) {
+        Ok(_) => println!("compare done",),
+        Err(e) => panic!("An error ocurred: {}", e),
+    };  
+    
 }
 
-fn unzip_and_compare(con: Config) {
-    for tld in &con.tlds {
+async fn unzip_and_compare(con: Config) -> Result<(),Box<dyn std::error::Error>> {
+    let mut tasks: Vec<JoinHandle<Result<(), ()>>>= vec![];
+    
+    for tld in con.tlds {
+        println!("started processing {}" , &tld);
+        let filedir = con.zonefile_dir.clone();
+        tasks.push(tokio::spawn(async move {
 
-        let new_file = match File::open(format!("{}/{}.txt.gz" , &con.zonefile_dir , &tld)) {
+        let new_file = match File::open(format!("{}/{}.txt.gz" ,filedir , &tld)) {
             Err(why) => panic!("couldn't open {}: {}", tld, why),
             Ok(file) => file,
         };
@@ -80,7 +89,7 @@ fn unzip_and_compare(con: Config) {
         let new_splt = new_s.split("\n");
         let new_str_vec: Vec<&str> = new_splt.collect();
 
-        let old_file = match File::open(format!("{}/{}.txt.gz.old" , &con.zonefile_dir , &tld)) {
+        let old_file = match File::open(format!("{}/{}.txt.gz.old" , filedir , &tld)) {
             Err(why) => panic!("couldn't open {}: {}", tld, why),
             Ok(file) => file,
         };
@@ -93,25 +102,29 @@ fn unzip_and_compare(con: Config) {
 
         let mut diff: Vec<&str> = Vec::new();
 
-        if new_str_vec.len() > old_str_vec.len() {
-            println!("boop");
-            for dom in new_str_vec {
-                if !old_str_vec.contains(&dom) {
-                    diff.push(dom);
-                }
-            }
-        } else {
-            println!("bööp");
-            for dom in new_str_vec {
-                
-                if !old_str_vec.contains(&dom) {
-                    diff.push(dom);
-                }
+        for dom in new_str_vec {
+            if !old_str_vec.contains(&dom) {
+                diff.push(dom);
             }
         }
-        println!("{}" , diff.len())
 
+        println!("{} {}" , tld , diff.len());
+
+        let diff_path = format!("{}/{}.diff", filedir , &tld); 
+        let mut diff_file = match File::create(&diff_path) {
+            Err(why) => panic!("couldn't open {}",  why),
+            Ok(file) => file,
+        };
+
+        for i in diff {
+            write!(diff_file,"{} \n" , i);
+        }
+        fs::rename(format!("{}/{}.txt.gz" ,&filedir,  &tld ) , format!("{}/{}.txt.gz.old" ,&filedir,  &tld)).expect(&format!( "couldn't rename {}.txt.gz to {}.txt.gz.old" , &tld  , &tld ));
+        Ok(())
+        }));
     }
+    join_all(tasks).await;
+    Ok(())
 }
 
 
@@ -120,8 +133,8 @@ async fn download_zonefiles(con: Config , key: Auth) -> Result<(),Box<dyn std::e
     let mut tasks: Vec<JoinHandle<Result<(), ()>>>= vec![];
     
     for tld in con.tlds {
-        //let path = format!("{}/czds/downloads/{}.zone", &con.czds_base_url , &tld);
-        let path = format!("http://127.0.0.1/{}.txt.gz", &tld );
+        let path = format!("{}/czds/downloads/{}.zone", &con.czds_base_url , &tld);
+        //let path = format!("http://127.0.0.1/{}.txt.gz", &tld );
         let filedir = con.zonefile_dir.clone();
         let token = key.accessToken.clone();
         let client = reqwest::Client::new();

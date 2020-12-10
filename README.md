@@ -5,8 +5,7 @@
 * ~~Supply starting zonefile~~
 * ~~Connect to czds api~~
 * ~~Get the last zonefiles~~
-* ~~Sort the files~~
 * ~~Get the diff with old files~~~
-* Discard old file and rename new one
+* ~~Discard old file and rename new one~~
 * Serialize data to json and send to telegram channel
 * Cry 
