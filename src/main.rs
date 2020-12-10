@@ -1,16 +1,19 @@
+use std::io::Read;
 use std::io::Write;
 use futures::future::join_all;
 use std::env;
 use std::collections::HashMap;
 use std::fs::read_dir;
+use std::fs;
 use std::fs::read_to_string;
 use serde_json::from_str;
 use reqwest::header::USER_AGENT;
 use std::fs::File;
-use std::io;
-use std::io::copy;
-use std::error::Error;
-use futures::future;
+use flate2::read::GzDecoder;
+//use std::io;
+//use std::io::copy;
+//use std::error::Error;
+//use futures::future;
 use tokio::task::JoinHandle;
 //use std::io::Read;
 //use std::process;
@@ -20,6 +23,7 @@ use serde_derive::{Serialize, Deserialize};
 
 
 #[derive(Serialize, Deserialize)]
+#[derive(Clone)]
 struct Config {
     tlds: Vec<String> ,//The tld vector 
     zonefile_dir : String,
@@ -28,7 +32,6 @@ struct Config {
     czds_base_url: String,
     czds_auth_url: String
 }
-
 
 #[derive(Serialize, Deserialize)]
 struct Auth {
@@ -54,23 +57,69 @@ fn main() {
         Ok(key) => token = key,
         Err(e) => panic!("An error ocurred: {}", e),
     };
-
-    match rt.block_on(download_zonefiles(con, token)) {
+    let cl_con = con.clone();
+    match rt.block_on(download_zonefiles(cl_con, token)) {
         Ok(_) => println!("Download done",),
         Err(e) => panic!("An error ocurred: {}", e),
     };    
 
-    
+    unzip_and_compare(con);
 }
+
+fn unzip_and_compare(con: Config) {
+    for tld in &con.tlds {
+
+        let new_file = match File::open(format!("{}/{}.txt.gz" , &con.zonefile_dir , &tld)) {
+            Err(why) => panic!("couldn't open {}: {}", tld, why),
+            Ok(file) => file,
+        };
+
+        let mut new_s = String::new();
+        let mut new_dec = GzDecoder::new(new_file);
+        new_dec.read_to_string(&mut new_s).unwrap();
+        let new_splt = new_s.split("\n");
+        let new_str_vec: Vec<&str> = new_splt.collect();
+
+        let old_file = match File::open(format!("{}/{}.txt.gz.old" , &con.zonefile_dir , &tld)) {
+            Err(why) => panic!("couldn't open {}: {}", tld, why),
+            Ok(file) => file,
+        };
+
+        let mut old_s = String::new();
+        let mut old_dec = GzDecoder::new(old_file);
+        old_dec.read_to_string(&mut old_s).unwrap();
+        let old_splt = old_s.split("\n");
+        let old_str_vec: Vec<&str> = old_splt.collect();
+
+        let mut diff: Vec<&str> = Vec::new();
+
+        if new_str_vec.len() > old_str_vec.len() {
+            println!("boop");
+            for dom in new_str_vec {
+                if !old_str_vec.contains(&dom) {
+                    diff.push(dom);
+                }
+            }
+        } else {
+            println!("bööp");
+            for dom in new_str_vec {
+                
+                if !old_str_vec.contains(&dom) {
+                    diff.push(dom);
+                }
+            }
+        }
+        println!("{}" , diff.len())
+
+    }
+}
+
 
 async fn download_zonefiles(con: Config , key: Auth) -> Result<(),Box<dyn std::error::Error>> {
     
     let mut tasks: Vec<JoinHandle<Result<(), ()>>>= vec![];
     
-
     for tld in con.tlds {
-
-
         //let path = format!("{}/czds/downloads/{}.zone", &con.czds_base_url , &tld);
         let path = format!("http://127.0.0.1/{}.txt.gz", &tld );
         let filedir = con.zonefile_dir.clone();
@@ -121,13 +170,8 @@ async fn download_zonefiles(con: Config , key: Auth) -> Result<(),Box<dyn std::e
     println!("Started {} tasks. Waiting...", tasks.len());
     join_all(tasks).await;
 
-   /* for tld in &con.tlds {
-        download_and_copy(&con.zonefile_dir, &tld , &key);
-        println!("dummy for https://czds-api.icann.org/czds/downloads/{}.zone" , &tld)
-    }*/
     Ok(())
 
-   
 }
 
 async fn czds_auth(con: &Config) -> Result<Auth,Box<dyn std::error::Error>> {
@@ -173,6 +217,7 @@ async fn czds_auth(con: &Config) -> Result<Auth,Box<dyn std::error::Error>> {
     println!("Permission granted");
     Ok(key)
 }
+
 fn check_old_zonefiles(con: &Config) {
     // read the zonefile dir 
     let paths = read_dir(&con.zonefile_dir).expect("Directory check err");
